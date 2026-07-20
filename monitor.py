@@ -5,7 +5,10 @@ import time
 from pathlib import Path
 
 from launcher import MelonDSLauncher
+from logger import get_logger
 from sync_engine import SyncEngine
+
+log = get_logger(__name__)
 
 
 class SaveMonitor:
@@ -49,11 +52,13 @@ class SaveMonitor:
         try:
             self.sync.upload(self.save_path)
             self.last_hash = current
-            print("[Monitor] Uploaded.")
-        except Exception as e:
-            print("[Monitor]", e)
+            log.info("[Monitor] Save changed -> uploaded to Drive.")
+        except Exception:
+            log.exception("[Monitor] Error while uploading save")
 
     def run(self):
+
+        log.info("[Monitor] Start watching save every %.1fs.", self.interval)
 
         self.last_hash = self.md5()
 
@@ -61,5 +66,7 @@ class SaveMonitor:
             self.upload_if_changed()
             time.sleep(self.interval)
 
-        # Đồng bộ lần cuối khi tắt melonDS
+        # Final sync when melonDS closes
         self.upload_if_changed()
+
+        log.info("[Monitor] melonDS closed -> stop watching.")

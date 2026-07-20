@@ -8,14 +8,17 @@ from tkinter import messagebox, ttk
 from config import config
 from drive import DriveService
 from launcher import MelonDSLauncher
+from logger import get_logger
 from models import SyncState
 from monitor import SaveMonitor
 from sync_engine import SyncEngine
 
-# ---- Bảng màu theme tối (modern) ----
-BG = "#1e1e2e"          # nền chính
-CARD = "#2a2a3e"        # nền thẻ / dialog phụ
-ACCENT = "#e23b3b"      # đỏ pokeball
+log = get_logger(__name__)
+
+# ---- Dark (modern) theme palette ----
+BG = "#1e1e2e"          # main background
+CARD = "#2a2a3e"        # card / secondary dialog background
+ACCENT = "#e23b3b"      # pokeball red
 ACCENT_HOVER = "#f24b4b"
 TEXT = "#e6e6ea"
 MUTED = "#9a9ab0"
@@ -24,7 +27,7 @@ FONT = "Segoe UI"
 
 
 def make_pokeball(size: int) -> tk.PhotoImage:
-    """Vẽ icon quả cầu Pokémon (pokeball) bằng code, không cần file ngoài."""
+    """Draw a Pokémon pokeball icon in code, no external file needed."""
     img = tk.PhotoImage(width=size, height=size)
 
     c = size / 2
@@ -51,17 +54,17 @@ def make_pokeball(size: int) -> tk.PhotoImage:
                 outside.append((x, y))
                 continue
 
-            if d > R - outline:              # viền ngoài
+            if d > R - outline:              # outer rim
                 row.append(BLACK)
-            elif d < size * 0.13:            # nút giữa (trắng)
+            elif d < size * 0.13:            # center button (white)
                 row.append(WHITE)
-            elif d < size * 0.20:            # vòng đen quanh nút
+            elif d < size * 0.20:            # black ring around button
                 row.append(BLACK)
-            elif abs(dy) < size * 0.085:     # dải đen ngang giữa
+            elif abs(dy) < size * 0.085:     # black horizontal band
                 row.append(BLACK)
-            elif dy < 0:                     # nửa trên đỏ
+            elif dy < 0:                     # top half red
                 row.append(RED)
-            else:                            # nửa dưới trắng
+            else:                            # bottom half white
                 row.append(WHITE)
 
         rows.append("{" + " ".join(row) + "}")
@@ -92,13 +95,13 @@ class MainWindow:
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
 
-        # Icon pokeball cho cửa sổ + taskbar
+        # Pokeball icon for the window + taskbar
         self.icon = make_pokeball(48)
         self.root.iconphoto(True, self.icon)
 
         self._init_style()
 
-        # ---- Nội dung ----
+        # ---- Content ----
         container = ttk.Frame(self.root, style="Bg.TFrame")
         container.pack(fill="both", expand=True, padx=24, pady=20)
 
@@ -129,8 +132,8 @@ class MainWindow:
             command=lambda: self._run(launch=False),
         ).pack(fill="x")
 
-        # Dòng trạng thái: căn giữa, nổi bật
-        self.status = tk.StringVar(value="● Sẵn sàng")
+        # Status line: centered, highlighted
+        self.status = tk.StringVar(value="● Ready")
         self.status_label = ttk.Label(
             container,
             textvariable=self.status,
@@ -142,7 +145,7 @@ class MainWindow:
 
         center(self.root, 360, 400)
 
-        # ---- Kết nối Drive ----
+        # ---- Connect to Drive ----
         self.drive = DriveService()
         folder_id = self.drive.get_or_create_folder(config.drive_folder)
         self.sync_engine = SyncEngine(self.drive, folder_id)
@@ -218,46 +221,50 @@ class MainWindow:
     # ---------------------------------------------------------------- workflow
     def _run(self, launch: bool):
 
+        log.info("User clicked '%s'.", "Start melonDS" if launch else "Sync Now")
+
         def worker():
             try:
-                self.set_status("● Đang kiểm tra save cục bộ…", MUTED)
+                self.set_status("● Checking local save…", MUTED)
                 time.sleep(0.35)
 
-                self.set_status("● Đang so sánh với Google Drive…", MUTED)
+                self.set_status("● Comparing with Google Drive…", MUTED)
                 result = self.sync_engine.compare(config.save_path)
+                log.info("Compare result: %s", result.state.name)
                 time.sleep(0.35)
 
                 if result.state == SyncState.IDENTICAL:
-                    self.set_status("✓ IDENTICAL — đã đồng bộ", OK)
+                    self.set_status("✓ IDENTICAL — already in sync", OK)
                 else:
                     self.set_status(
-                        f"● {result.state.name} — cần bạn chọn nguồn",
+                        f"● {result.state.name} — please choose a source",
                         MUTED,
                     )
 
                     choice = self._ask_choice(result)
+                    log.info("User chose source: %s", choice or "Cancel")
 
                     if choice is None:
-                        self.set_status("✕ Đã hủy", MUTED)
+                        self.set_status("✕ Cancelled", MUTED)
                         return
 
                     if choice == "local":
-                        self.set_status("⬆ Đang tải bản PC lên Drive…", MUTED)
+                        self.set_status("⬆ Uploading PC save to Drive…", MUTED)
                         time.sleep(0.3)
                         self.sync_engine.upload(config.save_path)
-                        self.set_status("✓ Xong — Drive dùng bản PC", OK)
+                        self.set_status("✓ Done — Drive uses PC save", OK)
                     else:
-                        self.set_status("⬇ Đang tải bản Drive về…", MUTED)
+                        self.set_status("⬇ Downloading Drive save…", MUTED)
                         time.sleep(0.3)
                         self.sync_engine.download(
                             config.save_path,
                             result.remote,
                         )
-                        self.set_status("✓ Xong — PC dùng bản Drive", OK)
+                        self.set_status("✓ Done — PC uses Drive save", OK)
 
                 if launch:
                     time.sleep(0.3)
-                    self.set_status("▶ Đang mở melonDS…", MUTED)
+                    self.set_status("▶ Launching melonDS…", MUTED)
                     self.launcher.start()
 
                     monitor = SaveMonitor(
@@ -267,20 +274,21 @@ class MainWindow:
                         config.check_interval,
                     )
 
-                    self.set_status("● Đang chơi — tự đồng bộ khi có thay đổi…", ACCENT)
+                    self.set_status("● Playing — auto-syncing on changes…", ACCENT)
                     monitor.run()
 
-                    self.set_status("✓ Đã đóng melonDS — hoàn tất", OK)
+                    self.set_status("✓ melonDS closed — finished", OK)
 
             except Exception as e:
-                self.set_status("✕ Lỗi", ACCENT)
+                log.exception("Error during sync")
+                self.set_status("✕ Error", ACCENT)
                 self._error(str(e))
 
         threading.Thread(target=worker, daemon=True).start()
 
     # ---------------------------------------------------- choice dialog (modal)
     def _ask_choice(self, result):
-        """Gọi từ worker thread; mở dialog trên main thread rồi chờ kết quả."""
+        """Called from a worker thread; open the dialog on the main thread and wait for the result."""
         holder = {"val": None}
         done = threading.Event()
 
@@ -299,21 +307,21 @@ class MainWindow:
         has_remote = remote is not None
 
         hint = {
-            SyncState.LOCAL_NEWER: "Bản trên PC mới hơn.",
-            SyncState.REMOTE_NEWER: "Bản trên Drive mới hơn.",
-            SyncState.LOCAL_MISSING: "PC chưa có save — chỉ có trên Drive.",
-            SyncState.REMOTE_MISSING: "Drive chưa có save — chỉ có trên PC.",
-        }.get(result.state, "Hai nơi khác nhau.")
+            SyncState.LOCAL_NEWER: "The PC save is newer.",
+            SyncState.REMOTE_NEWER: "The Drive save is newer.",
+            SyncState.LOCAL_MISSING: "No save on PC — only on Drive.",
+            SyncState.REMOTE_MISSING: "No save on Drive — only on PC.",
+        }.get(result.state, "The two sides differ.")
 
         def fmt(f):
             if f is None:
-                return "— chưa có —"
+                return "— none —"
             when = f.modified.astimezone().strftime("%d/%m/%Y %H:%M")
             kind = "melonDS (.sav)" if f.name.lower().endswith(".sav") else "Delta (.dsv)"
             return f"{kind}\n{when}\n{f.size:,} bytes"
 
         dlg = tk.Toplevel(self.root)
-        dlg.title("Chọn bản save")
+        dlg.title("Choose a save")
         dlg.configure(bg=BG)
         dlg.resizable(False, False)
         dlg.transient(self.root)
@@ -322,13 +330,13 @@ class MainWindow:
 
         ttk.Label(
             dlg,
-            text="Save ở 2 nơi không giống nhau",
+            text="The saves in the two places differ",
             style="Title.TLabel",
         ).pack(pady=(18, 2), padx=20)
 
         ttk.Label(
             dlg,
-            text=hint + "  Chọn bản bạn muốn giữ:",
+            text=hint + "  Choose the one to keep:",
             background=BG,
             foreground=MUTED,
             font=(FONT, 10),
@@ -366,19 +374,19 @@ class MainWindow:
 
         build_card(
             0, "💻  PC (melonDS)", fmt(local), "local",
-            has_local, "⬆  Dùng bản PC",
+            has_local, "⬆  Use PC save",
             "Accent.TButton" if result.state == SyncState.LOCAL_NEWER else "Ghost.TButton",
         )
         build_card(
             1, "☁  Google Drive", fmt(remote), "remote",
-            has_remote, "⬇  Dùng bản Drive",
+            has_remote, "⬇  Use Drive save",
             "Accent.TButton" if result.state in (
                 SyncState.REMOTE_NEWER, SyncState.LOCAL_MISSING,
             ) else "Ghost.TButton",
         )
 
         ttk.Button(
-            dlg, text="Hủy", style="Ghost.TButton",
+            dlg, text="Cancel", style="Ghost.TButton",
             command=lambda: pick(None),
         ).pack(fill="x", padx=20, pady=(4, 16))
 

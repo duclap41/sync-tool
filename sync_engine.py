@@ -3,11 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from drive import DriveService
+from logger import get_logger
 from models import (
     DriveFile,
     SyncResult,
     SyncState,
 )
+
+log = get_logger(__name__)
 
 
 class SyncEngine:
@@ -25,7 +28,7 @@ class SyncEngine:
         self,
         base_name: str,
     ) -> DriveFile | None:
-        """Lấy file save mới nhất trên Drive, xét cả .sav lẫn .dsv."""
+        """Get the newest save file on Drive, considering both .sav and .dsv."""
 
         remotes = self.drive.list_saves(
             self.folder_id,
@@ -51,7 +54,7 @@ class SyncEngine:
             local_path
         )
 
-        # Xét mọi file save cùng tên gốc trên Drive rồi lấy bản mới nhất.
+        # Consider every save file with the same base name on Drive, then take the newest.
         remote = self._newest_remote(
             local_path.stem,
         )
@@ -78,8 +81,8 @@ class SyncEngine:
                 remote=None,
             )
 
-        # Chỉ so md5/size khi remote cùng định dạng (.sav) với local.
-        # Với .dsv thì nội dung byte khác (có footer) nên không so trực tiếp.
+        # Only compare md5/size when the remote is the same format (.sav) as local.
+        # A .dsv has different bytes (it has a footer), so it can't be compared directly.
         if (
             remote.name.lower().endswith(".sav")
             and
@@ -115,13 +118,15 @@ class SyncEngine:
 
         local_path = Path(local_path)
 
+        log.info("Uploading PC save to Drive: %s", local_path.name)
+
         self.drive.upload(
             self.folder_id,
             local_path,
         )
 
-        # Sau khi đẩy .sav của melonDS lên, dọn các bản save khác (vd .dsv cũ
-        # từ iPhone) để trên Drive chỉ còn đúng 1 file mới nhất là .sav.
+        # After pushing the melonDS .sav up, clean up other saves (e.g. the old
+        # .dsv from iPhone) so Drive keeps only one latest file: the .sav.
         self._keep_only(
             local_path.stem,
             local_path.name,
@@ -149,7 +154,7 @@ class SyncEngine:
 
         local_path = Path(local_path)
 
-        # Nếu chưa được truyền remote (vd gọi trực tiếp) thì tự tìm bản mới nhất.
+        # If no remote was passed (e.g. called directly), find the newest one.
         if remote is None:
             remote = self._newest_remote(
                 local_path.stem,
@@ -161,9 +166,11 @@ class SyncEngine:
                 "Remote save not found."
             )
 
-        # melonDS cần .sav: nếu bản mới nhất là .dsv thì convert trước khi ghi
-        # vào save_path để melonDS mở nhanh, khỏi tự convert lúc load.
+        # melonDS needs .sav: if the newest is a .dsv, convert it before writing
+        # to save_path so melonDS opens fast without converting on load.
         if remote.name.lower().endswith(".dsv"):
+
+            log.info("Newest is .dsv -> convert to .sav and write to local.")
 
             data = self.drive.download_bytes(
                 remote.id,

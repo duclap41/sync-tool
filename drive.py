@@ -6,6 +6,9 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from models import DriveFile
+from logger import get_logger
+
+log = get_logger(__name__)
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -16,10 +19,10 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-# Các đuôi file save mà tool nhận biết (melonDS = .sav, Delta/DeSmuME = .dsv)
+# Save file extensions the tool recognizes (melonDS = .sav, Delta/DeSmuME = .dsv)
 SAVE_EXTENSIONS = (".sav", ".dsv")
 
-# Cấu trúc footer của file .dsv, lấy đúng theo j-tai/dsv2sav
+# Footer structure of a .dsv file, taken from j-tai/dsv2sav
 # https://github.com/j-tai/dsv2sav/blob/master/dsv2sav.py
 DSV_FOOTER = b"|<--Snip above here to create a raw sav by excluding this DeSmuME savedata footer:"
 DSV_COOKIE = b"|-DESMUME SAVE-|"
@@ -47,8 +50,10 @@ class DriveService:
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
+                log.info("Drive token expired -> refreshing.")
                 creds.refresh(Request())
             else:
+                log.info("No valid token -> opening browser to sign in to Google.")
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_file,
                     SCOPES,
@@ -57,6 +62,7 @@ class DriveService:
 
             Path(self.token_file).write_text(creds.to_json(), encoding="utf8")
 
+        log.info("Connected to Google Drive.")
         return build("drive", "v3", credentials=creds)
 
     @staticmethod
@@ -72,10 +78,11 @@ class DriveService:
 
     @staticmethod
     def dsv_to_sav(data: bytes) -> bytes:
-        """Chuyển dữ liệu .dsv (DeSmuME) sang .sav thô bằng cách cắt bỏ footer.
+        """Convert .dsv (DeSmuME) data to raw .sav by stripping the footer.
 
-        Logic lấy đúng theo j-tai/dsv2sav: footer luôn ở cuối file và kết thúc
-        bằng cookie ``|-DESMUME SAVE-|``; phần .sav là toàn bộ byte phía trước.
+        Logic taken from j-tai/dsv2sav: the footer is always at the end of the
+        file and ends with the cookie ``|-DESMUME SAVE-|``; the .sav part is all
+        the bytes before it.
         """
         footer = data[-DSV_FOOTER_LEN:]
         if not footer.endswith(DSV_COOKIE):
@@ -90,6 +97,7 @@ class DriveService:
 
         files = result.get("files", [])
         if files:
+            log.info("Using existing Drive folder: %s", name)
             return files[0]["id"]
 
         folder = self.service.files().create(
@@ -100,6 +108,7 @@ class DriveService:
             fields="id",
         ).execute()
 
+        log.info("Created new Drive folder: %s", name)
         return folder["id"]
 
     def find_file(self, folder_id: str, filename: str):
@@ -115,8 +124,8 @@ class DriveService:
 
     @staticmethod
     def _to_drivefile(f: dict) -> DriveFile:
-        # modifiedTime của Drive là UTC (đuôi "Z") -> đọc thành datetime có
-        # tzinfo UTC để so sánh đúng với giờ local (cũng để ở UTC).
+        # Drive's modifiedTime is UTC (trailing "Z") -> parse into a datetime
+        # with UTC tzinfo so it compares correctly with local time (also UTC).
         return DriveFile(
             id=f["id"],
             name=f["name"],
@@ -135,7 +144,7 @@ class DriveService:
         return self._to_drivefile(f)
 
     def list_saves(self, folder_id: str, base_name: str) -> list[DriveFile]:
-        """Liệt kê tất cả file save (cả .sav và .dsv) cùng tên gốc trong folder."""
+        """List all save files (both .sav and .dsv) with the same base name in the folder."""
         names = " or ".join(
             f"name='{base_name}{ext}'" for ext in SAVE_EXTENSIONS
         )
@@ -145,7 +154,13 @@ class DriveService:
             fields="files(id,name,md5Checksum,size,modifiedTime)",
         ).execute()
 
-        return [self._to_drivefile(f) for f in result.get("files", [])]
+        saves = [self._to_drivefile(f) for f in result.get("files", [])]
+        log.info(
+            "Found %d save file(s) on Drive: %s",
+            len(saves),
+            [s.name for s in saves],
+        )
+        return saves
 
     def local_info(self, path: Path):
         if not path.exists():
@@ -156,7 +171,7 @@ class DriveService:
             name=path.name,
             md5=self.md5(path),
             size=path.stat().st_size,
-            # Để cùng chuẩn UTC (aware) với modifiedTime của Drive.
+            # Keep the same UTC (aware) standard as Drive's modifiedTime.
             modified=datetime.fromtimestamp(
                 path.stat().st_mtime,
                 tz=timezone.utc,
@@ -168,12 +183,14 @@ class DriveService:
         remote = self.find_file(folder_id, path.name)
 
         if remote:
+            log.info("Updating existing file on Drive: %s", path.name)
             return self.service.files().update(
                 fileId=remote["id"],
                 media_body=media,
                 fields="id",
             ).execute()["id"]
 
+        log.info("Creating new file on Drive: %s", path.name)
         return self.service.files().create(
             body={
                 "name": path.name,
@@ -184,6 +201,7 @@ class DriveService:
         ).execute()["id"]
 
     def download(self, file_id: str, output: Path):
+        log.info("Downloading file from Drive: %s", output.name)
         request = self.service.files().get_media(fileId=file_id)
 
         with output.open("wb") as f:
@@ -193,13 +211,15 @@ class DriveService:
                 _, done = downloader.next_chunk()
 
     def trash(self, file_id: str):
-        # Chuyển vào thùng rác (an toàn, có thể khôi phục) thay vì xóa vĩnh viễn.
+        log.info("Moving old file to Drive trash (id=%s).", file_id)
+        # Move to trash (safe, recoverable) instead of permanently deleting.
         self.service.files().update(
             fileId=file_id,
             body={"trashed": True},
         ).execute()
 
     def download_bytes(self, file_id: str) -> bytes:
+        log.info("Downloading .dsv from Drive into memory to convert (id=%s).", file_id)
         request = self.service.files().get_media(fileId=file_id)
 
         buffer = io.BytesIO()

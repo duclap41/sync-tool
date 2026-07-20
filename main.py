@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import traceback
-
+from logger import get_logger
 from ui import MainWindow
+
+log = get_logger(__name__)
 
 
 def main():
+
+    log.info("=== Pokemon Save Sync starting ===")
 
     try:
 
@@ -13,21 +16,17 @@ def main():
 
         app.run()
 
+        log.info("=== Exited normally ===")
+
     except KeyboardInterrupt:
 
-        print("Exiting...")
+        log.info("Interrupted by user (Ctrl+C). Exiting.")
 
     except Exception:
 
-        print("=" * 80)
+        log.exception("Fatal error")
 
-        print("Fatal Error")
-
-        print("=" * 80)
-
-        traceback.print_exc()
-
-        input("\nPress ENTER to exit...")
+        input("\nLog written to logs/sync.log. Press ENTER to exit...")
 
 
 if __name__ == "__main__":

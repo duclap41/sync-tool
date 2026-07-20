@@ -13,3 +13,7 @@ wheels/
 # credentials
 google-credentials.json
 token.json
+
+# logs (giữ thư mục, bỏ qua nội dung log)
+logs/*.log
+logs/*.log.*

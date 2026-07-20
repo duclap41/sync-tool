@@ -35,10 +35,10 @@ def load_config() -> Config:
     return Config(
         drive_folder=raw["drive_folder"],
 
-        # Save KHÔNG bắt buộc phải tồn tại
+        # Save file is NOT required to exist yet
         save_path=str(save_path),
 
-        # Hai file này bắt buộc
+        # These two files are required
         rom_path=str(
             _require_file(
                 Path(raw["rom_path"]),
