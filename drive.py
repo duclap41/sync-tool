@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from models import DriveFile
 
@@ -14,6 +15,15 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+# Các đuôi file save mà tool nhận biết (melonDS = .sav, Delta/DeSmuME = .dsv)
+SAVE_EXTENSIONS = (".sav", ".dsv")
+
+# Cấu trúc footer của file .dsv, lấy đúng theo j-tai/dsv2sav
+# https://github.com/j-tai/dsv2sav/blob/master/dsv2sav.py
+DSV_FOOTER = b"|<--Snip above here to create a raw sav by excluding this DeSmuME savedata footer:"
+DSV_COOKIE = b"|-DESMUME SAVE-|"
+DSV_FOOTER_LEN = len(DSV_FOOTER) + 24 + len(DSV_COOKIE)
 
 
 class DriveService:
@@ -60,6 +70,18 @@ class DriveService:
                 h.update(chunk)
         return h.hexdigest()
 
+    @staticmethod
+    def dsv_to_sav(data: bytes) -> bytes:
+        """Chuyển dữ liệu .dsv (DeSmuME) sang .sav thô bằng cách cắt bỏ footer.
+
+        Logic lấy đúng theo j-tai/dsv2sav: footer luôn ở cuối file và kết thúc
+        bằng cookie ``|-DESMUME SAVE-|``; phần .sav là toàn bộ byte phía trước.
+        """
+        footer = data[-DSV_FOOTER_LEN:]
+        if not footer.endswith(DSV_COOKIE):
+            raise ValueError("Invalid DSV data (cookie mismatch)")
+        return data[:-DSV_FOOTER_LEN]
+
     def get_or_create_folder(self, name: str) -> str:
         result = self.service.files().list(
             q=f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
@@ -91,11 +113,10 @@ class DriveService:
             return None
         return files[0]
 
-    def get_remote_info(self, folder_id: str, filename: str):
-        f = self.find_file(folder_id, filename)
-        if f is None:
-            return None
-
+    @staticmethod
+    def _to_drivefile(f: dict) -> DriveFile:
+        # modifiedTime của Drive là UTC (đuôi "Z") -> đọc thành datetime có
+        # tzinfo UTC để so sánh đúng với giờ local (cũng để ở UTC).
         return DriveFile(
             id=f["id"],
             name=f["name"],
@@ -103,8 +124,28 @@ class DriveService:
             size=int(f.get("size", 0)),
             modified=datetime.fromisoformat(
                 f["modifiedTime"].replace("Z", "+00:00")
-            ).replace(tzinfo=None),
+            ),
         )
+
+    def get_remote_info(self, folder_id: str, filename: str):
+        f = self.find_file(folder_id, filename)
+        if f is None:
+            return None
+
+        return self._to_drivefile(f)
+
+    def list_saves(self, folder_id: str, base_name: str) -> list[DriveFile]:
+        """Liệt kê tất cả file save (cả .sav và .dsv) cùng tên gốc trong folder."""
+        names = " or ".join(
+            f"name='{base_name}{ext}'" for ext in SAVE_EXTENSIONS
+        )
+
+        result = self.service.files().list(
+            q=f"'{folder_id}' in parents and ({names}) and trashed=false",
+            fields="files(id,name,md5Checksum,size,modifiedTime)",
+        ).execute()
+
+        return [self._to_drivefile(f) for f in result.get("files", [])]
 
     def local_info(self, path: Path):
         if not path.exists():
@@ -115,7 +156,11 @@ class DriveService:
             name=path.name,
             md5=self.md5(path),
             size=path.stat().st_size,
-            modified=datetime.fromtimestamp(path.stat().st_mtime),
+            # Để cùng chuẩn UTC (aware) với modifiedTime của Drive.
+            modified=datetime.fromtimestamp(
+                path.stat().st_mtime,
+                tz=timezone.utc,
+            ),
         )
 
     def upload(self, folder_id: str, path: Path):
@@ -146,3 +191,21 @@ class DriveService:
             done = False
             while not done:
                 _, done = downloader.next_chunk()
+
+    def trash(self, file_id: str):
+        # Chuyển vào thùng rác (an toàn, có thể khôi phục) thay vì xóa vĩnh viễn.
+        self.service.files().update(
+            fileId=file_id,
+            body={"trashed": True},
+        ).execute()
+
+    def download_bytes(self, file_id: str) -> bytes:
+        request = self.service.files().get_media(fileId=file_id)
+
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+
+        return buffer.getvalue()
