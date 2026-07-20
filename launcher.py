@@ -38,7 +38,7 @@ class MelonDSLauncher:
         self.process = subprocess.Popen(
             [
                 str(self.melonds),
-                "-f",
+                # "-f", this only fullscreen the first window, not all of them
                 str(self.rom),
             ]
         )
