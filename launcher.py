@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -35,12 +36,20 @@ class MelonDSLauncher:
         if self.is_running:
             return self.process
 
+        # Fix melonDS 1.0's Qt high-DPI bug: on Windows display scales other
+        # than 100%, screens are scaled incorrectly and leave a few pixels of
+        # border in fullscreen. Setting QT_ENABLE_HIGHDPI_SCALING=0 fixes it.
+        # See https://github.com/melonDS-emu/melonDS/issues/2208
+        env = os.environ.copy()
+        env["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+
         self.process = subprocess.Popen(
             [
                 str(self.melonds),
                 # "-f", this only fullscreen the first window, not all of them
                 str(self.rom),
-            ]
+            ],
+            env=env,
         )
 
         return self.process
