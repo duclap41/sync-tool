@@ -100,25 +100,38 @@ Edit `config.json` to match your machine:
 uv run python main.py
 ```
 
-### One-click on Windows (`.bat` file)
+### One-click on Windows
 
-A ready-to-use `run.bat` is included in the project. Just **double-click it** to
-start the app.
+Two launchers are included; just **double-click** one:
 
-If you want to create it yourself, make a file named `run.bat` in the project
-folder with this content:
+- **`run.vbs`** (recommended) — starts the app with **no console window at all**.
+- **`run.bat`** — same thing, but a command window may flash for a moment (a `.bat`
+  file always opens a console briefly; that is a Windows limitation).
+
+Both use `uvw` + `pythonw`, the "windowless" variants of `uv` and Python, so no
+terminal stays open. You still get full output in `logs/sync.log`.
+
+`run.bat`:
 
 ```bat
 @echo off
 cd /d "%~dp0"
-uv run python main.py
+start "" uvw run pythonw main.py
 ```
 
-- `cd /d "%~dp0"` switches to the folder where the `.bat` file lives, so it works
-  no matter where you double-click it from.
-- `uv run python main.py` runs the app inside the uv-managed environment.
+`run.vbs`:
 
-Tip: right-click `run.bat` → **Send to → Desktop (create shortcut)** to get a
+```vbs
+Set fso = CreateObject("Scripting.FileSystemObject")
+Set sh = CreateObject("WScript.Shell")
+sh.CurrentDirectory = fso.GetParentFolderName(WScript.ScriptFullName)
+sh.Run "uvw run pythonw main.py", 0, False   ' 0 = hidden window
+```
+
+Prefer a visible console while debugging? Run `uv run python main.py` in a
+terminal instead.
+
+Tip: right-click `run.vbs` → **Send to → Desktop (create shortcut)** to get a
 desktop icon.
 
 ## Logs

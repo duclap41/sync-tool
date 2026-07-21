@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 from config import config
@@ -132,6 +136,13 @@ class MainWindow:
             command=lambda: self._run(launch=False),
         ).pack(fill="x")
 
+        ttk.Button(
+            container,
+            text="📂 Open save folder",
+            style="Small.TButton",
+            command=self._open_save_dir,
+        ).pack(pady=(10, 0))
+
         # Status line: centered, highlighted
         self.status = tk.StringVar(value="● Ready")
         self.status_label = ttk.Label(
@@ -204,6 +215,21 @@ class MainWindow:
             foreground=[("disabled", MUTED)],
         )
 
+        # Small, link-like button (blends into the background)
+        style.configure(
+            "Small.TButton",
+            background=BG,
+            foreground=MUTED,
+            font=(FONT, 9),
+            borderwidth=0,
+            padding=6,
+        )
+        style.map(
+            "Small.TButton",
+            background=[("active", CARD)],
+            foreground=[("active", TEXT)],
+        )
+
     # ------------------------------------------------------------ status utils
     def set_status(self, text: str, color: str = ACCENT):
         def apply():
@@ -217,6 +243,35 @@ class MainWindow:
             0,
             lambda: messagebox.showerror("Pokémon Sync", msg),
         )
+
+    # -------------------------------------------------------- open save folder
+    def _open_save_dir(self):
+        save = Path(config.save_path)
+        folder = save.parent
+        log.info("Open save folder: %s", folder)
+
+        if not folder.exists():
+            self._error(f"Save folder does not exist:\n{folder}")
+            return
+
+        try:
+            # On Windows, highlight the save file if it already exists;
+            # otherwise just open the containing folder.
+            if sys.platform.startswith("win"):
+                if save.exists():
+                    subprocess.run(["explorer", "/select,", str(save)])
+                else:
+                    os.startfile(str(folder))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                if save.exists():
+                    subprocess.run(["open", "-R", str(save)])
+                else:
+                    subprocess.run(["open", str(folder)])
+            else:
+                subprocess.run(["xdg-open", str(folder)])
+        except Exception as e:
+            log.exception("Failed to open save folder")
+            self._error(str(e))
 
     # ---------------------------------------------------------------- workflow
     def _run(self, launch: bool):
