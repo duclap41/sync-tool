@@ -78,16 +78,21 @@ class DriveService:
 
     @staticmethod
     def dsv_to_sav(data: bytes) -> bytes:
-        """Convert .dsv (DeSmuME) data to raw .sav by stripping the footer.
+        """Convert .dsv data to a raw .sav.
 
-        Logic taken from j-tai/dsv2sav: the footer is always at the end of the
-        file and ends with the cookie ``|-DESMUME SAVE-|``; the .sav part is all
-        the bytes before it.
+        Two cases are handled:
+
+        - Desktop DeSmuME .dsv: the file ends with a footer whose cookie is
+          ``|-DESMUME SAVE-|`` (logic from j-tai/dsv2sav). We strip that footer.
+        - Delta (iPhone) .dsv: it is already raw save data with no DeSmuME
+          footer (verified by inspecting a real file: exactly 512 KB, no
+          cookie), so we return it unchanged.
         """
-        footer = data[-DSV_FOOTER_LEN:]
-        if not footer.endswith(DSV_COOKIE):
-            raise ValueError("Invalid DSV data (cookie mismatch)")
-        return data[:-DSV_FOOTER_LEN]
+        if data[-DSV_FOOTER_LEN:].endswith(DSV_COOKIE):
+            return data[:-DSV_FOOTER_LEN]
+
+        # No DeSmuME footer -> already a raw save (e.g. from Delta).
+        return data
 
     def get_or_create_folder(self, name: str) -> str:
         result = self.service.files().list(
